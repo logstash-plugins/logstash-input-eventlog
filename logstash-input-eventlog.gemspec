@@ -25,10 +25,7 @@ Gem::Specification.new do |s|
   s.add_runtime_dependency 'logstash-codec-plain'
 
   if RUBY_PLATFORM == 'java'
-    s.add_runtime_dependency 'jruby-win32ole'
-  else
-    s.add_runtime_dependency 'win32ole'
+    s.add_runtime_dependency "jruby-win32ole"                   #(unknown license)
   end
-
 end
 
