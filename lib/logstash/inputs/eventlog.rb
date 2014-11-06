@@ -7,7 +7,7 @@ require "socket"
 # This input will pull events from a (http://msdn.microsoft.com/en-us/library/windows/desktop/bb309026%28v=vs.85%29.aspx)[Windows Event Log].
 #
 # To collect Events from the System Event Log, use a config like:
-#
+# [source,ruby]
 #     input {
 #       eventlog {
 #         type  => 'Win32-EventLog'
