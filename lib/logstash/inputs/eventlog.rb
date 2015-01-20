@@ -17,7 +17,6 @@ require "socket"
 class LogStash::Inputs::EventLog < LogStash::Inputs::Base
 
   config_name "eventlog"
-  milestone 2
 
   default :codec, "plain"
 
