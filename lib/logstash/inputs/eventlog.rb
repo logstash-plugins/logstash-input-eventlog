@@ -50,7 +50,7 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
 
       events = @wmi.ExecNotificationQuery(wmi_query)
 
-      while true
+      loop do
         notification = events.NextEvent(1000) #timeout is 1000 ms
         event = notification.TargetInstance
 
@@ -87,7 +87,7 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
         decorate(e)
         queue << e
 
-      end # while
+      end # loop
 
     rescue LogStash::ShutdownSignal
       return
