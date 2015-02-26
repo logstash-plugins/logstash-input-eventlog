@@ -90,7 +90,7 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
       end # while
 
     rescue LogStash::ShutdownSignal
-
+      return
     rescue Exception => ex
       @logger.error("Windows Event Log error: #{ex}\n#{ex.backtrace}")
       sleep 1
