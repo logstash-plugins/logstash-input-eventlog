@@ -51,11 +51,7 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
       events = @wmi.ExecNotificationQuery(wmi_query)
 
       while true
-        begin
-          notification = events.NextEvent(1000) #timeout is 1000 ms
-        rescue
-          next
-        end
+        notification = events.NextEvent(1000) #timeout is 1000 ms
         event = notification.TargetInstance
 
         timestamp = to_timestamp(event.TimeGenerated)
