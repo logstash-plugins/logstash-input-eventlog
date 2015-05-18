@@ -41,62 +41,72 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
 
   public
   def run(queue)
-    @wmi = WIN32OLE.connect("winmgmts://")
 
+    @wmi = WIN32OLE.connect("winmgmts://")
     wmi_query = "Select * from __InstanceCreationEvent Where TargetInstance ISA 'Win32_NTLogEvent' And (TargetInstance.LogFile = '#{@logfiles}')"
 
+    @logger.debug("Tailing Windows Event Log '#{@logfile}'")
+
     begin
-      @logger.debug("Tailing Windows Event Log '#{@logfile}'")
+      @events = @wmi.ExecNotificationQuery(wmi_query)
+    rescue => e
+      @logger.fatal("Unable to tail Windows Event Log: #{e.message}")
+      @logger.info("Windows Event Log Query: #{wmi_query}")
+      return # fatal scenario => exit
+    end
 
-      events = @wmi.ExecNotificationQuery(wmi_query)
+    loop do
 
-      loop do
-        notification = events.NextEvent(1000) #timeout is 1000 ms
-        event = notification.TargetInstance
+      begin
+        # timeout is needed here otherwise NextEvent prevents logstash from exiting
+        notification = @events.NextEvent(1000) # 1000 ms
+      rescue Java::OrgRacobCom::ComFailException
+        next
+      end
 
-        timestamp = to_timestamp(event.TimeGenerated)
+      event = notification.TargetInstance
 
-        e = LogStash::Event.new(
-          "host" => @hostname,
-          "path" => @logfile,
-          "type" => @type,
-          LogStash::Event::TIMESTAMP => timestamp
-        )
+      timestamp = to_timestamp(event.TimeGenerated)
 
-        %w{Category CategoryString ComputerName EventCode EventIdentifier
-            EventType Logfile Message RecordNumber SourceName
-            TimeGenerated TimeWritten Type User
-        }.each{
-            |property| e[property] = event.send property
-        }
+      e = LogStash::Event.new(
+        "host" => @hostname,
+        "path" => @logfile,
+        "type" => @type,
+        LogStash::Event::TIMESTAMP => timestamp
+      )
 
-        if RUBY_PLATFORM == "java"
-          # unwrap jruby-win32ole racob data
-          e["InsertionStrings"] = unwrap_racob_variant_array(event.InsertionStrings)
-          data = unwrap_racob_variant_array(event.Data)
-          # Data is an array of signed shorts, so convert to bytes and pack a string
-          e["Data"] = data.map{|byte| (byte > 0) ? byte : 256 + byte}.pack("c*")
-        else
-          # win32-ole data does not need to be unwrapped
-          e["InsertionStrings"] = event.InsertionStrings
-          e["Data"] = event.Data
-        end
+      %w{Category CategoryString ComputerName EventCode EventIdentifier
+          EventType Logfile Message RecordNumber SourceName
+          TimeGenerated TimeWritten Type User
+      }.each{
+          |property| e[property] = event.send property
+      }
 
-        e["message"] = event.Message
+      if RUBY_PLATFORM == "java"
+        # unwrap jruby-win32ole racob data
+        e["InsertionStrings"] = unwrap_racob_variant_array(event.InsertionStrings)
+        data = unwrap_racob_variant_array(event.Data)
+        # Data is an array of signed shorts, so convert to bytes and pack a string
+        e["Data"] = data.map{|byte| (byte > 0) ? byte : 256 + byte}.pack("c*")
+      else
+        # win32-ole data does not need to be unwrapped
+        e["InsertionStrings"] = event.InsertionStrings
+        e["Data"] = event.Data
+      end
 
-        decorate(e)
-        queue << e
+      e["message"] = event.Message
 
-      end # loop
+      decorate(e)
+      queue << e
 
-    rescue LogStash::ShutdownSignal
-      return
-    rescue Exception => ex
-      @logger.error("Windows Event Log error: #{ex}\n#{ex.backtrace}")
-      sleep 1
-      retry
-    end # rescue
+    end # loop
 
+  rescue LogStash::ShutdownSignal
+    return
+  rescue => ex
+    @logger.error("Windows Event Log error: #{ex}\n#{ex.backtrace}")
+    sleep 1
+    retry
   end # def run
 
   private
