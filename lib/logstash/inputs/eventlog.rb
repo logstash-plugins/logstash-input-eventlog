@@ -65,6 +65,10 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
     @eventlog_item = nil
     @queue = nil
 
+	@running = true
+	@working = true
+	@can_exit = false
+
     _sincedb_open
   end # def register
 
@@ -92,8 +96,9 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
       end
 
       @logger.debug("Tailing Windows Event Log '#{@logfile}'")
-      while true
+      while @running == true
         if old_total != @eventlog.total_records()
+          @working = true
           @eventlog.read(flags, rec_num){ |eventlog_item|
             @eventlog_item = eventlog_item
             if( @eventlog_item.record_number > rec_num )
@@ -103,6 +108,7 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
             rec_num = @eventlog_item.record_number
           }
         end
+        @working = false
         sleep frequency
       end # while
     rescue Exception => ex
@@ -110,6 +116,7 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
       sleep 1
       retry
     end # rescue
+    @can_exit = true
   end # run
 
   private
@@ -249,7 +256,20 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
 
   public
   def teardown
+    #wait end working
+    @logger.debug("wait end working")
+    while @working == true
+        sleep 1
+    end
+    @logger.debug("stop running")
+    @running = false
+    @logger.debug("wait to be able exit")
+    until @can_exit == true
+        sleep 1
+    end
+    EventLogSimpleReader.close()
     sincedb_write
+    finished
   end # def teardown
 
 end # class LogStash::Inputs::EventLog
