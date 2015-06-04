@@ -60,12 +60,12 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
 
     @sincedb = {}
     @sincedb_last_write = Time.now.to_i
-    @sincedb_write_pending = false
+    @sincedb_write_pending = true
     @sincedb_writing = false
     @eventlog_item = nil
     @queue = nil
 
-	@running = true
+	@must_running = true
 	@working = true
 	@can_exit = false
 
@@ -96,7 +96,7 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
       end
 
       @logger.debug("Tailing Windows Event Log '#{@logfile}'")
-      while @running == true
+      while @must_running == true
         if old_total != @eventlog.total_records()
           @working = true
           @eventlog.read(flags, rec_num){ |eventlog_item|
@@ -111,6 +111,9 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
         @working = false
         sleep frequency
       end # while
+    rescue LogStash::ShutdownSignal
+      @logger.debug("Shutdown requested")
+      @working = false
     rescue Exception => ex
       @logger.error("Windows Event Log error: #{ex}\n#{ex.backtrace}")
       sleep 1
@@ -186,17 +189,6 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
   end # def _sincedb_open
 
   private
-  def _sincedb_write_if_pending
-
-    #  Check to see if sincedb should be written out since there was a file read after the sincedb flush, 
-    #  and during the sincedb_write_interval
-
-    if @sincedb_write_pending
-      _sincedb_write
-    end
-  end
-
-  private
   def _sincedb_write(sincedb_force_write=false)
 
     # This routine will only write out sincedb if enough time has passed based on @sincedb_write_interval
@@ -256,19 +248,19 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
 
   public
   def teardown
+    @logger.debug("Stop running")
+    @must_running = false
     #wait end working
     @logger.debug("wait end working")
     while @working == true
         sleep 1
     end
-    @logger.debug("stop running")
-    @running = false
+    sincedb_write("shutdown requested")
     @logger.debug("wait to be able exit")
-    until @can_exit == true
+    while @can_exit == false
         sleep 1
     end
-    EventLogSimpleReader.close()
-    sincedb_write
+    @eventlog.close()
     finished
   end # def teardown
 
