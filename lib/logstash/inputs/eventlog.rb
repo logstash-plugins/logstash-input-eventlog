@@ -51,11 +51,14 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
   # has no effect.
   config :start_position, :validate => [ "beginning", "end"], :default => "end"
 
+  log_class_prefix = "InputEventLog"
+
   public
   def register
 
     @hostname = Socket.gethostname
-    @logger.info("Registering input eventlog://#{@hostname}/#{@logfile}")
+	@log_prefix = "[#{@log_class_prefix}:#{@logfile}]"
+    @logger.info? && @logger.info("#{@log_prefix}register: Registering input eventlog://#{@hostname}/#{@logfile}")
     @eventlog = EventLogSimpleReader.new(@logfile)
 
     @sincedb = {}
@@ -82,12 +85,12 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
 
       if(@sincedb[@logfile] != nil && @sincedb[@logfile].to_i > @eventlog.oldest_record_number)
         rec_num = @sincedb[@logfile].to_i
-        @logger.debug("run: Starting #{@logfile} at rec #{rec_num.to_s}")
+        @logger.debug? && @logger.debug("#{@log_prefix}run: Starting #{@logfile} at rec #{rec_num.to_s}")
       elsif(@start_position == "end")
         rec_num = @eventlog.read_last_event.record_number
-        @logger.debug("run: Starting #{@logfile} at rec #{rec_num.to_s}")
+        @logger.debug? && @logger.debug("#{@log_prefix}run: Starting #{@logfile} at rec #{rec_num.to_s}")
       else
-        @logger.debug("run: Start #{@logfile} from the beginning")
+        @logger.debug? && @logger.debug("#{@log_prefix}run: Start #{@logfile} from the beginning")
         @eventlog.read{ |eventlog_item|
           @eventlog_item = eventlog_item
           send_logstash_event()
@@ -95,7 +98,7 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
         }
       end
 
-      @logger.debug("Tailing Windows Event Log '#{@logfile}'")
+      @logger.debug? && @logger.debug("#{@log_prefix}run: Tailing Windows Event Log '#{@logfile}'")
       while @must_running == true
         if old_total != @eventlog.total_records()
           @working = true
@@ -112,10 +115,10 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
         sleep frequency
       end # while
     rescue LogStash::ShutdownSignal
-      @logger.debug("Shutdown requested")
+      @logger.debug? && @logger.debug("#{@log_prefix}run: Shutdown requested")
       @working = false
     rescue Exception => ex
-      @logger.error("Windows Event Log error: #{ex}\n#{ex.backtrace}")
+      @logger.error? && @logger.error("#{@log_prefix}run: Windows Event Log error: #{ex}\n#{ex.backtrace}")
       sleep 1
       retry
     end # rescue
@@ -165,7 +168,7 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
 
   private
   def sincedb_write(reason=nil)
-    @logger.debug("caller requested sincedb write (#{reason})")
+    @logger.debug? && @logger.debug("#{@log_prefix}sincedb_write: caller requested sincedb write (#{reason})")
     _sincedb_write(true)  # since this is an external request, force the write
   end
 
@@ -175,14 +178,14 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
     begin
       db = File.open(path)
     rescue
-      @logger.debug("_sincedb_open: #{path}: #{$!}")
+      @logger.debug? && @logger.debug("#{@log_prefix}_sincedb_open: #{path}: #{$!}")
       return
     end
 
-    @logger.debug("_sincedb_open: reading from #{path}")
+    @logger.debug? && @logger.debug("#{@log_prefix}_sincedb_open: reading from #{path}")
     db.each do |line|
       eventlogname, recordnumber = line.split(" ", 2)
-      @logger.debug("_sincedb_open: setting #{eventlogname} to #{recordnumber.to_i}")
+      @logger.debug? && @logger.debug("#{@log_prefix}_sincedb_open: setting #{eventlogname} to #{recordnumber.to_i}")
       @sincedb[eventlogname] = recordnumber.to_i
     end
     db.close
@@ -198,7 +201,7 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
     # ie. external caller calling the public sincedb_write method
 
     if(@sincedb_writing)
-      @logger.warn("_sincedb_write already writing")
+      @logger.warn? && @logger.warn("#{@log_prefix}_sincedb_write: already writing")
       return
     end
 
@@ -216,14 +219,14 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
        end
     end
 
-    @logger.debug("writing sincedb (delta since last write = #{delta})")
+    @logger.debug? && @logger.debug("#{@log_prefix}_sincedb_write: writing sincedb (delta since last write = #{delta})")
 
     path = @sincedb_path
     tmp = "#{path}.new"
     begin
       db = File.open(tmp, "w")
     rescue => e
-      @logger.warn("_sincedb_write failed: #{tmp}: #{e}")
+      @logger.warn? && @logger.warn("#{@log_prefix}_sincedb_write: failed: #{tmp}: #{e}")
       @sincedb_writing = false
       return
     end
@@ -236,7 +239,7 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
     begin
       File.rename(tmp, path)
     rescue => e
-      @logger.warn("_sincedb_write rename/sync failed: #{tmp} -> #{path}: #{e}")
+      @logger.warn? && @logger.warn("#{@log_prefix}_sincedb_write: rename/sync failed: #{tmp} -> #{path}: #{e}")
     end
 
     @sincedb_last_write = now
@@ -248,15 +251,15 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
 
   public
   def teardown
-    @logger.debug("Stop running")
+    @logger.debug? && @logger.debug("#{@log_prefix}teardown: Stop running")
     @must_running = false
     #wait end working
-    @logger.debug("wait end working")
+    @logger.debug? && @logger.debug("#{@log_prefix}teardown: Wait end working")
     while @working == true
         sleep 1
     end
-    sincedb_write("shutdown requested")
-    @logger.debug("wait to be able exit")
+    sincedb_write("Shutdown requested")
+    @logger.debug? && @logger.debug("#{@log_prefix}teardown: Wait to be able exit")
     while @can_exit == false
         sleep 1
     end
