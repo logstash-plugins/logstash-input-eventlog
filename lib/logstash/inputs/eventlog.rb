@@ -32,7 +32,7 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
     @hostname = Socket.gethostname
     @logger.info("Registering input eventlog://#{@hostname}/#{@logfile}")
 
-    if RUBY_PLATFORM == "java"
+    if LogStash::Environment.jruby?
       require "jruby-win32ole"
     else
       require "win32ole"
@@ -82,7 +82,7 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
           |property| e[property] = event.send property
       }
 
-      if RUBY_PLATFORM == "java"
+      if LogStash::Environment.jruby?
         # unwrap jruby-win32ole racob data
         e["InsertionStrings"] = unwrap_racob_variant_array(event.InsertionStrings)
         data = unwrap_racob_variant_array(event.Data)
