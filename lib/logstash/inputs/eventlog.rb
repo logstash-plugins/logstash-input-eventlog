@@ -55,7 +55,7 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
       return # fatal scenario => exit
     end
 
-    loop do
+    while !stop?
 
       begin
         # timeout is needed here otherwise NextEvent prevents logstash from exiting
