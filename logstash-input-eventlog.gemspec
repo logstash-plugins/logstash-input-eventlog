@@ -1,7 +1,7 @@
 Gem::Specification.new do |s|
 
   s.name            = 'logstash-input-eventlog'
-  s.version         = '2.0.3'
+  s.version         = '3.0.0'
   s.licenses        = ['Apache License (2.0)']
   s.summary         = "This input will pull events from a Windows Event Log"
   s.description     = "This gem is a logstash plugin required to be installed on top of the Logstash core pipeline using $LS_HOME/bin/plugin install gemname. This gem is not a stand-alone program"
@@ -24,10 +24,7 @@ Gem::Specification.new do |s|
 
   s.add_runtime_dependency 'logstash-codec-plain'
 
-  if RUBY_PLATFORM == 'java'
-    s.platform = RUBY_PLATFORM
-    s.add_runtime_dependency "jruby-win32ole"                   #(unknown license)
-  end
+  s.add_runtime_dependency "win32-eventlog", "~> 0.6.5"  # Artistic 2.0
+  s.add_runtime_dependency "stud", "~> 0.0.22"   # Apache 2.0
   s.add_development_dependency 'logstash-devutils'
 end
-

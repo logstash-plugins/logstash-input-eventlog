@@ -2,7 +2,8 @@
 require "logstash/inputs/base"
 require "logstash/namespace"
 require "logstash/timestamp"
-require "socket"
+require "win32/eventlog"
+require "stud/interval"
 
 # This input will pull events from a http://msdn.microsoft.com/en-us/library/windows/desktop/bb309026%28v=vs.85%29.aspx[Windows Event Log].
 #
@@ -21,120 +22,71 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
   default :codec, "plain"
 
   # Event Log Name
-  config :logfile, :validate => :array, :default => [ "Application", "Security", "System" ]
+  # System and Security may require that privileges are given to the user running logstash.
+  # see more at: https://social.technet.microsoft.com/forums/windowsserver/en-US/d2f813db-6142-4b5b-8d86-253ebb740473/easy-way-to-read-security-log
+  config :logfile, :validate => :string, :validate => [ "Application", "Security", "System" ], :default => "Application"
+
+  # How frequently should tail check for new event logs in ms (default: 1 second)
+  config :interval, :validate => :number, :default => 1000
 
   public
   def register
 
     # wrap specified logfiles in suitable OR statements
-    @logfiles = @logfile.join("' OR TargetInstance.LogFile = '")
-
     @hostname = Socket.gethostname
-    @logger.info("Registering input eventlog://#{@hostname}/#{@logfile}")
+    @logger.info("Opening eventlog #{@logfile}")
 
-    if LogStash::Environment.jruby?
-      require "jruby-win32ole"
-    else
-      require "win32ole"
+    begin
+      @eventlog = Win32::EventLog.open(@logfile)
+    rescue SystemCallError => e
+      if e.errno == 1314 # ERROR_PRIVILEGE_NOT_HELD
+        @logger.fatal("No privilege held to open logfile", :logfile => @logfile)
+      end
+      raise
     end
   end # def register
 
   public
   def run(queue)
 
-    @wmi = WIN32OLE.connect("winmgmts://")
-    wmi_query = "Select * from __InstanceCreationEvent Where TargetInstance ISA 'Win32_NTLogEvent' And (TargetInstance.LogFile = '#{@logfiles}')"
-
     @logger.debug("Tailing Windows Event Log '#{@logfile}'")
 
-    begin
-      @events = @wmi.ExecNotificationQuery(wmi_query)
-    rescue => e
-      @logger.fatal("Unable to tail Windows Event Log: #{e.message}")
-      @logger.info("Windows Event Log Query: #{wmi_query}")
-      return # fatal scenario => exit
-    end
+    old_total = @eventlog.total_records()
+    flags     = Win32::EventLog::FORWARDS_READ | Win32::EventLog::SEEK_READ
+    rec_num   = @eventlog.read_last_event.record_number
 
     while !stop?
-
-      begin
-        # timeout is needed here otherwise NextEvent prevents logstash from exiting
-        notification = @events.NextEvent(1000) # 1000 ms
-      rescue Java::OrgRacobCom::ComFailException
-        next
+      new_total = @eventlog.total_records()
+      if new_total != old_total
+        rec_num = @eventlog.oldest_record_number() if @eventlog.full?
+        @eventlog.read(flags, rec_num).each { |log| e = process(log); decorate(e); queue << e }
+        old_total = new_total
+        rec_num   = @eventlog.read_last_event.record_number + 1
       end
+      Stud.stoppable_sleep(@interval/1000.0) { stop? }
+    end
+  end
 
-      event = notification.TargetInstance
+  private
+  def process(log)
 
-      timestamp = to_timestamp(event.TimeGenerated)
-
-      e = LogStash::Event.new(
-        "host" => @hostname,
-        "path" => @logfile,
-        "type" => @type,
-        LogStash::Event::TIMESTAMP => timestamp
-      )
-
-      %w{Category CategoryString ComputerName EventCode EventIdentifier
-          EventType Logfile Message RecordNumber SourceName
-          TimeGenerated TimeWritten Type User
-      }.each{
-          |property| e[property] = event.send property
-      }
-
-      if LogStash::Environment.jruby?
-        # unwrap jruby-win32ole racob data
-        e["InsertionStrings"] = unwrap_racob_variant_array(event.InsertionStrings)
-        data = unwrap_racob_variant_array(event.Data)
-        # Data is an array of signed shorts, so convert to bytes and pack a string
-        e["Data"] = data.map{|byte| (byte > 0) ? byte : 256 + byte}.pack("c*")
-      else
-        # win32-ole data does not need to be unwrapped
-        e["InsertionStrings"] = event.InsertionStrings
-        e["Data"] = event.Data
-      end
-
-      e["message"] = event.Message
-
-      decorate(e)
-      queue << e
-
-    end # loop
-
-  rescue LogStash::ShutdownSignal
-    return
-  rescue => ex
-    @logger.error("Windows Event Log error: #{ex}\n#{ex.backtrace}")
-    sleep 1
-    retry
+    LogStash::Event.new(
+      "host"             => @hostname,
+      "Logfile"          => @logfile,
+      "message"          => log["description"].strip,
+      "Category"         => log["category"],
+      "ComputerName"     => log["computer"],
+      "EventIdentifier"  => log["event_id"],
+      "EventType"        => log["event_type"],
+      "RecordNumber"     => log["record_number"],
+      "SourceName"       => log["source"],
+      "TimeGenerated"    => log["time_generated"],
+      "TimeWritten"      => log["time_written"],
+      "Type"             => log["event_type"],
+      "User"             => log["user"],
+      "InsertionStrings" => log["string_inserts"]
+    )
   end # def run
 
-  private
-  def unwrap_racob_variant_array(variants)
-    variants ||= []
-    variants.map {|v| (v.respond_to? :getValue) ? v.getValue : v}
-  end # def unwrap_racob_variant_array
-
-  # the event log timestamp is a utc string in the following format: yyyymmddHHMMSS.xxxxxx±UUU
-  # http://technet.microsoft.com/en-us/library/ee198928.aspx
-  private
-  def to_timestamp(wmi_time)
-    result = ""
-    # parse the utc date string
-    /(?<w_date>\d{8})(?<w_time>\d{6})\.\d{6}(?<w_sign>[\+-])(?<w_diff>\d{3})/ =~ wmi_time
-    result = "#{w_date}T#{w_time}#{w_sign}"
-    # the offset is represented by the difference, in minutes,
-    # between the local time zone and Greenwich Mean Time (GMT).
-    if w_diff.to_i > 0
-      # calculate the timezone offset in hours and minutes
-      h_offset = w_diff.to_i / 60
-      m_offset = w_diff.to_i - (h_offset * 60)
-      result.concat("%02d%02d" % [h_offset, m_offset])
-    else
-      result.concat("0000")
-    end
-
-    return LogStash::Timestamp.new(DateTime.strptime(result, "%Y%m%dT%H%M%S%z").to_time)
-  end
 end # class LogStash::Inputs::EventLog
 
