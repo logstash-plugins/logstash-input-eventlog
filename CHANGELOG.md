@@ -1,3 +1,5 @@
+# 3.0.2
+  - New dependency requirements for logstash-core for the 5.0 release
 ## 3.0.1
  - fix spec exclusion for non-windows platform
 
