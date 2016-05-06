@@ -1,7 +1,7 @@
 Gem::Specification.new do |s|
 
   s.name            = 'logstash-input-eventlog'
-  s.version         = '4.0.0'
+  s.version         = '4.0.1'
   s.licenses        = ['Apache License (2.0)']
   s.summary         = "This input will pull events from a Windows Event Log"
   s.description     = "This gem is a Logstash plugin required to be installed on top of the Logstash core pipeline using $LS_HOME/bin/logstash-plugin install gemname. This gem is not a stand-alone program"
