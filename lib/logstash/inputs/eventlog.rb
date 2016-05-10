@@ -1,13 +1,14 @@
 # encoding: utf-8
 require "logstash/inputs/base"
 require "logstash/namespace"
-require "socket"
-require 'java'
-require 'logstash/inputs/eventlog/eventlogsimplereader'
-
-java_import 'java.lang.System'
+require "logstash/timestamp"
+require "win32/eventlog"
+require "stud/interval"
 
 # This input will pull events from a http://msdn.microsoft.com/en-us/library/windows/desktop/bb309026%28v=vs.85%29.aspx[Windows Event Log].
+# Note that Windows Event Logs are stored on disk in a binary format and are only accessible from the Win32 API.
+# This means Losgtash needs to be running as an agent on Windows servers where you wish to collect logs 
+# from, and will not be accesible across the network.
 #
 # To collect Events from the System Event Log, use a config like:
 # [source,ruby]
@@ -24,8 +25,13 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
 
   default :codec, "plain"
 
-  # Event Log Name "Application", "Security", "System"
+  # Event Log Name
+  # System and Security may require that privileges are given to the user running logstash.
+  # see more at: https://social.technet.microsoft.com/forums/windowsserver/en-US/d2f813db-6142-4b5b-8d86-253ebb740473/easy-way-to-read-security-log
   config :logfile, :validate => :string, :default => [ "Application" ]
+
+  # How frequently should tail check for new event logs in ms (default: 1 second)
+  config :interval, :validate => :number, :default => 1000
 
   # Where to write the sincedb database (keeps track of the current
   # position of monitored event logs).
@@ -35,19 +41,13 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
   # monitored event logs.
   config :sincedb_write_interval, :validate => :number, :default => 15
 
-  # The delay between reads is due to the nature of the Windows event log.
-  # It is not really designed to be tailed in the manner of a Unix syslog,
-  # for example, in that not nearly as many events are typically recorded.
-  # It's just not designed to be polled that heavily.
-  config :frequency, :validate => :number, :default => 5
-
-  # Choose where Logstash starts initially reading files: at the beginning or
-  # at the end. The default behavior treats files like live streams and thus
+  # Choose where Logstash starts initially reading eventlog: at the beginning or
+  # at the end. The default behavior treats eventlog like live streams and thus
   # starts at the end. If you have old data you want to import, set this
   # to 'beginning'
   #
-  # This option only modifies "first contact" situations where a file is new
-  # and not seen before. If a file has already been seen before, this option
+  # This option only modifies "first contact" situations where an eventlog is new
+  # and not seen before. If an eventlog has already been seen before, this option
   # has no effect.
   config :start_position, :validate => [ "beginning", "end"], :default => "end"
 
@@ -56,11 +56,19 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
   public
   def register
 
+    # wrap specified logfiles in suitable OR statements
     @hostname = Socket.gethostname
-	@log_prefix = "[#{@@log_class_prefix}:#{@logfile}]"
-    @logger.info? && @logger.info("#{@log_prefix}register: Registering input eventlog://#{@hostname}/#{@logfile}")
-    @eventlog = EventLogSimpleReader.new(@logfile)
+    @log_prefix = "[#{@@log_class_prefix}:#{@logfile}]"
+    @logger.info("#{@log_prefix}register: Registering input eventlog://#{@hostname}/#{@logfile}")
 
+    begin
+      @eventlog = Win32::EventLog.open(@logfile)
+    rescue SystemCallError => e
+      if e.errno == 1314 # ERROR_PRIVILEGE_NOT_HELD
+        @logger.fatal("No privilege held to open logfile", :logfile => @logfile)
+      end
+      raise
+    end
     @sincedb = {}
     @sincedb_last_write = Time.now.to_i
     @sincedb_write_pending = true
@@ -68,10 +76,9 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
     @eventlog_item = nil
     @queue = nil
 
-	@must_running = true
-	@working = true
-	@can_exit = false
-	@in_teardown = false
+    @working = true
+    @can_exit = false
+    @in_teardown = false
 
     _sincedb_open
   end # def register
@@ -82,16 +89,16 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
     begin
       rec_num = 0
       old_total = 0
-      flags = EventLogSimpleReader::FORWARDS_READ | EventLogSimpleReader::SEEK_READ
+      flags     = Win32::EventLog::FORWARDS_READ | Win32::EventLog::SEEK_READ
 
       if(@sincedb[@logfile] != nil && @sincedb[@logfile].to_i > @eventlog.oldest_record_number)
         rec_num = @sincedb[@logfile].to_i
-        @logger.debug? && @logger.debug("#{@log_prefix}run: Starting #{@logfile} at rec #{rec_num.to_s}")
+        @logger.debug("#{@log_prefix}run: Starting #{@logfile} at rec #{rec_num.to_s}")
       elsif(@start_position == "end")
         rec_num = @eventlog.read_last_event.record_number
-        @logger.debug? && @logger.debug("#{@log_prefix}run: Starting #{@logfile} at rec #{rec_num.to_s}")
+        @logger.debug("#{@log_prefix}run: Start #{@logfile} from the ending at rec #{rec_num.to_s}")
       else
-        @logger.debug? && @logger.debug("#{@log_prefix}run: Start #{@logfile} from the beginning")
+        @logger.debug("#{@log_prefix}run: Start #{@logfile} from the beginning")
         @eventlog.read{ |eventlog_item|
           @eventlog_item = eventlog_item
           send_logstash_event()
@@ -99,8 +106,8 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
         }
       end
 
-      @logger.debug? && @logger.debug("#{@log_prefix}run: Tailing Windows Event Log '#{@logfile}'")
-      while @must_running == true
+      @logger.debug("#{@log_prefix}run: Tailing Windows Event Log '#{@logfile}'")
+      while !stop?
         if old_total != @eventlog.total_records()
           @working = true
           @eventlog.read(flags, rec_num){ |eventlog_item|
@@ -113,13 +120,13 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
           }
         end
         @working = false
-        sleep frequency
+        Stud.stoppable_sleep(@interval/1000.0) { stop? }
       end # while
     rescue LogStash::ShutdownSignal
-      @logger.debug? && @logger.debug("#{@log_prefix}run: Shutdown requested")
+      @logger.debug("#{@log_prefix}run: Shutdown requested")
       @working = false
     rescue Exception => ex
-      @logger.error? && @logger.error("#{@log_prefix}run: Windows Event Log error: #{ex}\n#{ex.backtrace}")
+      @logger.error("#{@log_prefix}run: Windows Event Log error: #{ex}\n#{ex.backtrace}")
       sleep 1
       retry
     end # rescue
@@ -142,6 +149,7 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
     e["Data"] = @eventlog_item.data.nil? ? nil : @eventlog_item.data.force_encoding('iso-8859-1')
     e["Description"] = @eventlog_item.description.nil? ? nil : @eventlog_item.description.force_encoding('iso-8859-1')
     e["EventId"] = @eventlog_item.event_id
+    e["EventIdentifier"] = @eventlog_item.event_id
     e["EventCode"] = e["EventId"]
     e["EventType"] = @eventlog_item.event_type
     e["Logfile"] = @logfile
@@ -169,7 +177,7 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
 
   private
   def sincedb_write(reason=nil)
-    @logger.debug? && @logger.debug("#{@log_prefix}sincedb_write: Caller requested sincedb write (#{reason})")
+    @logger.debug("#{@log_prefix}sincedb_write: Caller requested sincedb write (#{reason})")
     _sincedb_write(true)  # since this is an external request, force the write
   end
 
@@ -250,28 +258,26 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
     System.gc()
   end # def _sincedb_write
 
-  public
-  def teardown
+  def stop
     if @in_teardown == false
         @in_teardown = true
-        @logger.debug? && @logger.debug("#{@log_prefix}teardown: Stop running")
-        @must_running = false
+        @logger.debug("#{@log_prefix}teardown: Stop running")
         #wait end working
-        @logger.debug? && @logger.debug("#{@log_prefix}teardown: Wait end working")
+        @logger.debug("#{@log_prefix}teardown: Wait end working")
         while @working == true
             sleep 1
         end
         sincedb_write("Shutdown requested")
-        @logger.debug? && @logger.debug("#{@log_prefix}teardown: Wait to be able exit")
+        @logger.debug("#{@log_prefix}teardown: Wait to be able exit")
         while @can_exit == false
             sleep 1
         end
         @eventlog.close
         finished
     else
-      @logger.warn? && @logger.warn("#{@log_prefix}teardown: Already requested")
+      @logger.warn("#{@log_prefix}teardown: Already requested")
     end
     return
-  end # def teardown
+  end # def stop
 
 end # class LogStash::Inputs::EventLog
