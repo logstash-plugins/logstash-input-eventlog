@@ -255,7 +255,7 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
     @sincedb_write_pending = false
     @sincedb_writing = false
 
-    System.gc()
+    GC.start
   end # def _sincedb_write
 
   def stop
@@ -273,7 +273,6 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
             sleep 1
         end
         @eventlog.close
-        finished
     else
       @logger.warn("#{@log_prefix}teardown: Already requested")
     end
