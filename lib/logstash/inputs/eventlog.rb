@@ -146,15 +146,19 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
 
     e["Category"] = @eventlog_item.category
     e["ComputerName"] = @eventlog_item.computer
-    e["Data"] = @eventlog_item.data.nil? ? nil : @eventlog_item.data.force_encoding('iso-8859-1')
-    e["Description"] = @eventlog_item.description.nil? ? nil : @eventlog_item.description.force_encoding('iso-8859-1')
+    e["Data"] = @eventlog_item.data.nil? ? nil : @eventlog_item.data.each_byte.map { |b| b.to_s(16) }.join
+    #HEXA  @eventlog_item.data.each_byte.map { |b| b.to_s(16) }.join
+    #ASCII @eventlog_item.data
+    #UTF-8 @eventlog_item.data.force_encoding('utf-8')
+    e["Description"] = @eventlog_item.description.nil? ? nil : @eventlog_item.description.encode('utf-8')
     e["EventId"] = @eventlog_item.event_id
     e["EventIdentifier"] = @eventlog_item.event_id
     e["EventCode"] = e["EventId"]
     e["EventType"] = @eventlog_item.event_type
     e["Logfile"] = @logfile
+    e["InsertionStrings"] = nil
     e["InsertionStrings"] = @eventlog_item.string_inserts.map{ |monostring|
-      monostring.nil? ? nil : monostring.force_encoding('iso-8859-1')
+      monostring.nil? ? nil : monostring.encode('utf-8')
     }
     e["Message"] = e["Description"].nil? ? e["InsertionStrings"] : e["Description"]
     e["message"] = e["Message"]
