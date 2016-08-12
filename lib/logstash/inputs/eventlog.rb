@@ -4,6 +4,8 @@ require "logstash/namespace"
 require "logstash/timestamp"
 require "win32/eventlog"
 require "stud/interval"
+require "logstash/util/charset"
+
 
 # This input will pull events from a http://msdn.microsoft.com/en-us/library/windows/desktop/bb309026%28v=vs.85%29.aspx[Windows Event Log].
 # Note that Windows Event Logs are stored on disk in a binary format and are only accessible from the Win32 API.
@@ -47,6 +49,7 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
       end
       raise
     end
+    @converter = LogStash::Util::Charset.new(Encoding::UTF_16LE)
   end # def register
 
   public
@@ -73,7 +76,7 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
   private
   def process(log)
 
-    LogStash::Event.new(
+    attrs = {
       "host"             => @hostname,
       "Logfile"          => @logfile,
       "message"          => log["description"].strip,
@@ -88,8 +91,20 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
       "Type"             => log["event_type"],
       "User"             => log["user"],
       "InsertionStrings" => log["string_inserts"]
-    )
+    }
+
+    attrs.each do |k,v|
+      next if ["host", "Logfile"].include?(k)
+      attrs[k] = convert(v)
+    end
+
+    LogStash::Event.new(attrs)
   end # def run
+
+  def convert(field)
+    return field unless field.is_a?(String)
+    @converter.convert(field)
+  end
 
 end # class LogStash::Inputs::EventLog
 
