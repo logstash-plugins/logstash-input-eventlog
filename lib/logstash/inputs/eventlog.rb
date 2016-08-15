@@ -34,6 +34,10 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
   # How frequently should tail check for new event logs in ms (default: 1 second)
   config :interval, :validate => :number, :default => 1000
 
+  # Event Log string encoding (default: UTF-16LE), however your system might be using another encoding, if you
+  # are seeing strange characters, inspect this variable.
+  config :charset, :validate => :string, :default => "UTF-16LE"
+
   public
   def register
 
@@ -49,7 +53,7 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
       end
       raise
     end
-    @converter = LogStash::Util::Charset.new(Encoding::UTF_16LE)
+    @converter = LogStash::Util::Charset.new(Encoding.find(@charset))
   end # def register
 
   public
@@ -102,8 +106,13 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
   end # def run
 
   def convert(field)
-    return field unless field.is_a?(String)
-    @converter.convert(field)
+    if field.is_a?(String)
+      @converter.convert(field)
+    elsif field.is_a?(Array)
+      field.map { |v| @converter.convert(v) }
+    else
+      field
+    end
   end
 
 end # class LogStash::Inputs::EventLog
