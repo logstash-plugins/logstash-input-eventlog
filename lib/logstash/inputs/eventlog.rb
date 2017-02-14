@@ -7,7 +7,7 @@ require "stud/interval"
 
 # This input will pull events from a http://msdn.microsoft.com/en-us/library/windows/desktop/bb309026%28v=vs.85%29.aspx[Windows Event Log].
 # Note that Windows Event Logs are stored on disk in a binary format and are only accessible from the Win32 API.
-# This means Losgtash needs to be running as an agent on Windows servers where you wish to collect logs 
+# This means Logstash needs to be running as an agent on Windows servers where you wish to collect logs 
 # from, and will not be accesible across the network.
 #
 # To collect Events from the System Event Log, use a config like:
