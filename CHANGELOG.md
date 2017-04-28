@@ -1,3 +1,7 @@
+## 4.1.0
+  - Add a default charset converter from default UTF-16LE, the one
+    output default by windows event log to our very own UTF-8 encoding.
+
 ## 4.0.2
   - Relax constraint on logstash-core-plugin-api to >= 1.60 <= 2.99
 
