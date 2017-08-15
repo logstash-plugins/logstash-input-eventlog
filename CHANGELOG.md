@@ -1,3 +1,6 @@
+## 4.1.2
+  - Fix some documentation issues
+
 ## 4.1.0
   - Add a default charset converter from default UTF-16LE, the one
     output default by windows event log to our very own UTF-8 encoding.
