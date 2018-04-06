@@ -1,3 +1,6 @@
+## 4.1.3
+  - Docs: Set the default_codec doc attribute.
+
 ## 4.1.2
   - Fix some documentation issues
 
