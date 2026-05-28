@@ -54,6 +54,7 @@ class LogStash::Inputs::EventLog < LogStash::Inputs::Base
       raise
     end
     @converter = LogStash::Util::Charset.new(Encoding.find(@charset))
+    @converter.logger = @logger
   end # def register
 
   public
